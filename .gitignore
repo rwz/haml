@@ -9,3 +9,4 @@
 .rbenv-version
 Gemfile.lock
 .rvmrc
+.rbx
