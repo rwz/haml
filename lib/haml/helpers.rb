@@ -578,7 +578,7 @@ MESSAGE
       return name, attributes_hash unless name =~ /^(.+?)?([\.#].*)$/
 
       return $1 || "div", Buffer.merge_attrs(
-        Haml::Parser.parse_class_and_id($2), attributes_hash)
+        Haml::Parser.parse_shortcuts($2), attributes_hash)
     end
 
     # Runs a block of code with the given buffer as the currently active buffer.

@@ -8,12 +8,6 @@ module Haml
     # Designates an XHTML/XML element.
     ELEMENT         = ?%
 
-    # Designates a `<div>` element with the given class.
-    DIV_CLASS       = ?.
-
-    # Designates a `<div>` element with the given id.
-    DIV_ID          = ?#
-
     # Designates an XHTML/XML comment.
     COMMENT         = ?/
 
@@ -43,22 +37,6 @@ module Haml
 
     # Designates a non-parsed line. Not actually a character.
     PLAIN_TEXT      = -1
-
-    # Keeps track of the ASCII values of the characters that begin a
-    # specially-interpreted line.
-    SPECIAL_CHARACTERS   = [
-      ELEMENT,
-      DIV_CLASS,
-      DIV_ID,
-      COMMENT,
-      DOCTYPE,
-      SCRIPT,
-      SANITIZE,
-      FLAT_SCRIPT,
-      SILENT_SCRIPT,
-      ESCAPE,
-      FILTER
-    ]
 
     # The value of the character that designates that a line is part
     # of a multiline string.
@@ -171,6 +149,10 @@ END
       to_close.times {|i| close unless to_close - 1 - i == 0 && mid_block_keyword?(line.text)}
     end
 
+    def shortcut_keys_regex
+      Haml::Parser.shortcut_keys_regex
+    end
+
     # Processes a single line of Haml.
     #
     # This method doesn't return anything; it simply processes the line and
@@ -179,10 +161,10 @@ END
       @index = index + 1
 
       case text[0]
-      when DIV_CLASS; push div(text)
-      when DIV_ID
+      when '#'
         return push plain(text) if text[1] == ?{
-        push div(text)
+        push default(text)
+      when shortcut_keys_regex; push default(text)
       when ELEMENT; push tag(text)
       when COMMENT; push comment(text[1..-1].strip)
       when SANITIZE
@@ -316,7 +298,7 @@ END
         end
       end
 
-      attributes = Parser.parse_class_and_id(attributes)
+      attributes = Parser.parse_shortcuts(attributes)
       attributes_list = []
 
       if attributes_hashes[:new]
@@ -355,8 +337,8 @@ END
 
     # Renders a line that creates an XHTML tag and has an implicit div because of
     # `.` or `#`.
-    def div(line)
-      tag('%div' + line)
+    def default(line)
+      tag('%' << Haml::Parser.config[:default_element] << line)
     end
 
     # Renders an XHTML comment.
@@ -422,27 +404,70 @@ END
       first.children = []
     end
 
-    # This is a class method so it can be accessed from {Haml::Helpers}.
-    #
-    # Iterates through the classes and ids supplied through `.`
-    # and `#` syntax, and returns a hash with them as attributes,
-    # that can then be merged with another attributes hash.
-    def self.parse_class_and_id(list)
-      attributes = {}
-      list.scan(/([#.])([-:_a-zA-Z0-9]+)/) do |type, property|
-        case type
-        when '.'
-          if attributes['class']
-            attributes['class'] += " "
-          else
-            attributes['class'] = ""
+    class << self
+
+      def config
+        @config ||= {
+          :default_element => 'div',
+          :shortcuts => { '#' => 'id', '.' => 'class' },
+          :multiple_attributes => [ 'class' ].to_set
+        }
+      end
+
+      # Keeps track of the ASCII values of the characters that begin a
+      # specially-interpreted line.
+      def special_characters
+        @special_characters ||= [
+          ELEMENT,
+          COMMENT,
+          DOCTYPE,
+          SCRIPT,
+          SANITIZE,
+          FLAT_SCRIPT,
+          SILENT_SCRIPT,
+          ESCAPE,
+          FILTER
+        ].dup.concat(config[:shortcuts].keys)
+      end
+
+      # This is a class method so it can be accessed from {Haml::Helpers}.
+      #
+      # Iterates throught the shortcuts and returns an attribute hash.
+      def parse_shortcuts(list)
+        Hash.new.tap do |attributes|
+          list.scan(shortcut_regex) do |type, property|
+            if name = config[:shortcuts][type]
+              if config[:multiple_attributes].include?(name)
+                attributes[name] ||= ''
+                attributes[name] = [ *attributes[name], *property ].join(' ').strip.squeeze(' ')
+              else
+                attributes[name] = property
+              end
+            else
+              raise SyntaxError.new "Wrong shortcut: #{type}"
+            end
           end
-          attributes['class'] += property
-        when '#'; attributes['id'] = property
         end
       end
-      attributes
-    end
+
+      def parse_class_and_id(list)
+        ActiveSupport::Deprecation.warn("parse_class_and_id is deprecated. Use parse_shortcuts inspead", caller)
+        parse_shortcuts(list)
+      end
+
+      def shortcut_keys_regex
+        @shortcut_keys_regex ||= begin
+          char_class = config[:shortcuts].keys.map(&Regexp.method(:escape)) * ''
+          Regexp.new("[#{char_class}]")
+        end
+      end
+
+      private
+
+      def shortcut_regex
+        @shortcut_regex ||= Regexp.new("(#{shortcut_keys_regex.source})([-:_a-zA-Z0-9]+)")
+      end
+    end    
 
     def parse_static_hash(text)
       attributes = {}
